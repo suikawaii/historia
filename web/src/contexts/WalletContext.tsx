@@ -1,134 +1,82 @@
 'use client';
 
-import { createContext, useContext, useState, useEffect, useCallback, ReactNode } from 'react';
-import { WalletState } from '@/lib/types';
+import { createContext, useContext, useEffect, ReactNode } from 'react';
 import {
-  isAdenaInstalled,
-  connectWallet as connectAdena,
-  getAccount,
-  disconnectWallet as disconnectAdena,
-} from '@/lib/wallet';
+  useCurrentAccount,
+  useConnectWallet,
+  useDisconnectWallet,
+  useSignAndExecuteTransaction,
+  useWallets,
+} from '@mysten/dapp-kit';
+import { Transaction } from '@mysten/sui/transactions';
+import { setSignAndExecuteFunction } from '@/lib/wallet';
 
 interface WalletContextType {
   connected: boolean;
   address: string | null;
-  chainId: string | null;
   isLoading: boolean;
   error: string | null;
-  connect: () => Promise<void>;
+  connect: (walletName?: string) => Promise<void>;
   disconnect: () => Promise<void>;
   isInstalled: boolean;
 }
 
 const WalletContext = createContext<WalletContextType | undefined>(undefined);
 
-export function WalletProvider({ children }: { children: ReactNode }) {
-  const [state, setState] = useState<WalletState>({
-    connected: false,
-    address: null,
-    chainId: null,
-  });
-  const [isLoading, setIsLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [isInstalled, setIsInstalled] = useState(false);
+function WalletBridge({ children }: { children: ReactNode }) {
+  const account = useCurrentAccount();
+  const wallets = useWallets();
+  const { mutateAsync: connectAsync, isPending: isConnecting, error: connectError } = useConnectWallet();
+  const { mutateAsync: disconnectAsync } = useDisconnectWallet();
+  const { mutateAsync: signAndExecuteAsync } = useSignAndExecuteTransaction();
 
-  // Check for Adena installation on mount and periodically
+  // Keep module-level sign function in sync with current account
   useEffect(() => {
-    let attempts = 0;
-    const maxAttempts = 10;
-
-    const checkInstallation = () => {
-      if (isAdenaInstalled()) {
-        setIsInstalled(true);
-        return true;
-      }
-      return false;
-    };
-
-    // Check immediately
-    if (checkInstallation()) {
-      return;
-    }
-
-    // Check every 100ms for up to 1 second
-    const interval = setInterval(() => {
-      attempts++;
-      if (checkInstallation() || attempts >= maxAttempts) {
-        clearInterval(interval);
-      }
-    }, 100);
-
-    return () => clearInterval(interval);
-  }, []);
-
-  // Check connection on mount
-  useEffect(() => {
-    async function checkConnection() {
-      if (!isInstalled) return;
-
-      try {
-        const account = await getAccount();
-        if (account) {
-          setState({
-            connected: true,
-            address: account.address,
-            chainId: account.chainId,
-          });
-        }
-      } catch {
-        // Not connected, that's fine
-      }
-    }
-
-    checkConnection();
-  }, [isInstalled]);
-
-  const connect = useCallback(async () => {
-    if (!isAdenaInstalled()) {
-      setError('Adena wallet not installed. Please install from adena.app');
-      return;
-    }
-
-    setIsLoading(true);
-    setError(null);
-
-    try {
-      const { address, chainId } = await connectAdena();
-      setState({
-        connected: true,
-        address,
-        chainId,
+    if (account) {
+      setSignAndExecuteFunction(async (tx: Transaction) => {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const result = await signAndExecuteAsync({ transaction: tx as any });
+        return { digest: result.digest };
       });
-    } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to connect');
-    } finally {
-      setIsLoading(false);
+    } else {
+      setSignAndExecuteFunction(null);
     }
-  }, []);
+  }, [account?.address, signAndExecuteAsync]);
 
-  const disconnect = useCallback(async () => {
-    await disconnectAdena();
-    setState({
-      connected: false,
-      address: null,
-      chainId: null,
-    });
-  }, []);
+  const connect = async (walletName?: string) => {
+    if (wallets.length === 0) return;
+    const target = walletName
+      ? wallets.find(w => w.name === walletName)
+      : wallets[0];
+    if (!target) return;
+    await connectAsync({ wallet: target });
+  };
+
+  const disconnect = async () => {
+    await disconnectAsync();
+  };
+
+  const errorMessage = connectError instanceof Error ? connectError.message : null;
 
   return (
     <WalletContext.Provider
       value={{
-        ...state,
-        isLoading,
-        error,
+        connected: !!account,
+        address: account?.address ?? null,
+        isLoading: isConnecting,
+        error: errorMessage,
         connect,
         disconnect,
-        isInstalled,
+        isInstalled: wallets.length > 0,
       }}
     >
       {children}
     </WalletContext.Provider>
   );
+}
+
+export function WalletProvider({ children }: { children: ReactNode }) {
+  return <WalletBridge>{children}</WalletBridge>;
 }
 
 export function useWallet() {

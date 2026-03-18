@@ -2,64 +2,66 @@
 
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { WalletConnect } from '@/components/WalletConnect';
+import { SiteHeader } from '@/components/SiteHeader';
 import { SubmitForm } from '@/components/SubmitForm';
-import { useWallet } from '@/contexts/WalletContext';
 import { Footer } from '@/components/Footer';
 
 export default function SubmitPage() {
-  const { connected, address } = useWallet();
   const router = useRouter();
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      {/* Header */}
-      <header className="bg-[var(--card)] border-b border-[var(--border)] sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-16">
-          <div className="flex items-center justify-between h-20">
-            <div className="flex items-center gap-20">
-              <Link href="/" className="text-2xl font-light text-[var(--foreground)] tracking-tight">
-                HISTORIA
-              </Link>
-              <Link
-                href="/memoria"
-                className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-              >
-                Archive
-              </Link>
-            </div>
-            <div className="flex items-center gap-6">
-              {connected && address && (
-                <Link
-                  href="/profile"
-                  className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-                >
-                  Profile
-                </Link>
-              )}
-              <WalletConnect />
-            </div>
-          </div>
+    <div className="min-h-screen bg-[var(--background)] flex flex-col">
+      <SiteHeader />
+
+      <main className="flex-1 max-w-2xl w-full mx-auto px-6 lg:px-8 py-16">
+
+        {/* Breadcrumb */}
+        <div className="mb-12">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-xs text-[var(--subtle)] hover:text-[var(--foreground)] transition-colors uppercase tracking-widest font-medium"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Back
+          </Link>
         </div>
-      </header>
 
-      {/* Main */}
-      <main className="max-w-3xl mx-auto px-6 lg:px-16 py-12">
-        <Link href="/" className="inline-flex items-center gap-2 text-sm text-[var(--muted)] hover:text-[var(--foreground)] mb-10 transition-colors font-light">
-          <span>←</span>
-          <span>Back</span>
-        </Link>
-
-        <div className="mb-10">
-          <h1 className="text-4xl lg:text-5xl font-light text-[var(--foreground)] mb-4 leading-tight">
+        {/* Header */}
+        <div className="mb-12">
+          <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--subtle)] font-medium mb-5">
+            New Entry
+          </div>
+          <h1 className="text-4xl font-bold text-[var(--foreground)] tracking-tight mb-5 leading-tight">
             Submit a Claim
           </h1>
-          <p className="text-base text-[var(--muted)] leading-relaxed font-light">
-            Propose a historical claim to be verified collectively through stake-based consensus.
+          <p className="text-base text-[var(--muted)] leading-relaxed max-w-lg">
+            A claim is a clear, verifiable statement about the world.
+            The community will stake SUI to vote on its historical truth.
+            Accepted claims are permanently archived as collective memory.
           </p>
         </div>
 
-        <SubmitForm onSuccess={(eventId) => router.push(`/event/${eventId}`)} />
+        {/* Guidelines */}
+        <div className="mb-10 border-l-2 border-[var(--border)] pl-5">
+          <p className="text-xs font-semibold text-[var(--muted)] uppercase tracking-wider mb-2">
+            Guidelines
+          </p>
+          <ul className="space-y-1.5 text-sm text-[var(--subtle)] leading-relaxed">
+            <li>Claims must be specific and fact-checkable — not opinions.</li>
+            <li>Good example: <em className="text-[var(--muted)]">"The Renaissance began in Italy in the 14th century."</em></li>
+            <li>Avoid vague, predictive, or speculative statements.</li>
+          </ul>
+        </div>
+
+        <SubmitForm onSuccess={(claimId) => {
+          if (claimId) {
+            router.push(`/event/${claimId}`);
+          } else {
+            router.push('/');
+          }
+        }} />
       </main>
 
       <Footer />

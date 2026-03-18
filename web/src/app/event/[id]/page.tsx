@@ -3,339 +3,328 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'next/navigation';
 import Link from 'next/link';
-import { render, parseEventDetail } from '@/lib/gno';
-import { HistoriaEvent } from '@/lib/types';
-import { WalletConnect } from '@/components/WalletConnect';
-import { StatusBadge, OutcomeBadge } from '@/components/StatusBadge';
+import { fetchEvent } from '@/lib/sui';
+import { HistoriaClaim } from '@/lib/types';
+import { SiteHeader } from '@/components/SiteHeader';
 import { CommitForm } from '@/components/CommitForm';
 import { RevealForm } from '@/components/RevealForm';
 import { CountdownTimer } from '@/components/CountdownTimer';
 import { ResolveButton } from '@/components/ResolveButton';
+import { ClaimRewardButton } from '@/components/ClaimRewardButton';
+import { CategoryBadge } from '@/components/CategoryBadge';
+import { StatusBadge, OutcomeBadge } from '@/components/StatusBadge';
+import { ProfileLink } from '@/components/ProfileLink';
 import { useWallet } from '@/contexts/WalletContext';
 import { Footer } from '@/components/Footer';
 
-export default function EventDetailPage() {
+export default function ClaimDetailPage() {
   const { connected, address } = useWallet();
   const params = useParams();
   const eventId = params.id as string;
-  const [event, setEvent] = useState<HistoriaEvent | null>(null);
+  const [claim, setClaim] = useState<HistoriaClaim | null>(null);
   const [isLoading, setIsLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [hasPendingReveal, setHasPendingReveal] = useState(false);
 
   useEffect(() => {
-    async function loadEvent() {
+    async function load() {
       try {
-        const markdown = await render(eventId);
-        const parsed = parseEventDetail(markdown);
-        setEvent(parsed);
+        const parsed = await fetchEvent(eventId);
+        setClaim(parsed);
       } catch (err) {
-        setError(err instanceof Error ? err.message : 'Failed to load event');
+        setError(err instanceof Error ? err.message : 'Failed to load claim');
       } finally {
         setIsLoading(false);
       }
     }
-
-    loadEvent();
+    load();
   }, [eventId]);
 
-  // Auto-refresh during active phases (every 15 seconds)
   useEffect(() => {
-    if (!event || event.status === 'RESOLVED' || event.status === 'VOIDED') {
-      return;
-    }
+    if (!address || !claim) return;
+    const stored = localStorage.getItem(`historia_commit_${eventId}_${address}`);
+    const now = Date.now();
+    const isRevealPhase = claim.commitEnd && claim.revealEnd && now >= claim.commitEnd && now < claim.revealEnd;
+    setHasPendingReveal(!!stored && !!isRevealPhase);
+  }, [address, claim, eventId]);
 
+  useEffect(() => {
+    if (!claim || claim.status === 'RESOLVED' || claim.status === 'VOIDED') return;
     const interval = setInterval(async () => {
       try {
-        const markdown = await render(eventId);
-        const parsed = parseEventDetail(markdown);
-        setEvent(parsed);
-      } catch {
-        // Ignore refresh errors
-      }
+        const parsed = await fetchEvent(eventId);
+        setClaim(parsed);
+      } catch { /* silent */ }
     }, 15000);
-
     return () => clearInterval(interval);
-  }, [event, eventId]);
+  }, [claim, eventId]);
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center">
-        <div className="flex flex-col items-center">
-          <div className="w-10 h-10 border border-[var(--border)] border-t-[var(--foreground)] animate-spin mb-6"></div>
-          <p className="text-sm text-[var(--muted)] font-light">Loading event...</p>
+      <div className="min-h-screen bg-[var(--background)] flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-6 h-6 border-2 border-[var(--border)] border-t-[var(--foreground)] rounded-full animate-spin" />
+            <p className="text-xs text-[var(--subtle)] font-medium uppercase tracking-widest">Loading</p>
+          </div>
         </div>
       </div>
     );
   }
 
-  if (error || !event) {
+  if (error || !claim) {
     return (
-      <div className="min-h-screen bg-[var(--background)] text-[var(--foreground)] flex items-center justify-center">
-        <div className="text-center">
-          <p className="text-base text-[var(--muted)] mb-6 font-light">{error || 'Event not found'}</p>
-          <Link href="/" className="inline-flex items-center gap-2 px-6 py-3 bg-[var(--foreground)] text-[var(--background)] hover:bg-[var(--muted)] transition-colors font-light">
-            <span>←</span>
-            <span>Back</span>
-          </Link>
+      <div className="min-h-screen bg-[var(--background)] flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center">
+            <p className="text-sm text-[var(--muted)] mb-6">{error || 'Claim not found'}</p>
+            <Link href="/" className="btn-secondary">← Back to claims</Link>
+          </div>
         </div>
+        <Footer />
       </div>
     );
   }
+
+  const now = Date.now();
+  const isVotingPhase   = claim.commitEnd && now < claim.commitEnd;
+  const isRevealPhase   = claim.commitEnd && claim.revealEnd && now >= claim.commitEnd && now < claim.revealEnd;
+  const needsResolve    = claim.revealEnd && now >= claim.revealEnd && claim.status !== 'RESOLVED' && claim.status !== 'VOIDED';
+  const isResolved      = claim.status === 'RESOLVED';
+  const isVoided        = claim.status === 'VOIDED';
+
+  const hasVotes = claim.votesFor !== undefined && claim.votesAgainst !== undefined;
+  const totalVotes = hasVotes ? claim.votesFor! + claim.votesAgainst! : 0;
+  const forPercent    = totalVotes > 0 ? (claim.votesFor! / totalVotes * 100) : 0;
+  const againstPercent = totalVotes > 0 ? (claim.votesAgainst! / totalVotes * 100) : 0;
+
+  const savedCommit = address ? (() => {
+    try {
+      const raw = localStorage.getItem(`historia_commit_${eventId}_${address}`);
+      return raw ? JSON.parse(raw) : null;
+    } catch { return null; }
+  })() : null;
+
+  const userWon = isResolved && savedCommit && claim.outcome !== 'TIED' && claim.outcome !== 'PENDING' &&
+    ((savedCommit.vote === true  && claim.outcome === 'ACCEPTED') ||
+     (savedCommit.vote === false && claim.outcome === 'REJECTED'));
+
+  // Phase-based background
+  const pageBg =
+    isRevealPhase || hasPendingReveal ? 'bg-[var(--phase-reveal-bg)]' :
+    isResolved || isVoided            ? 'bg-[var(--phase-archive-bg)]' :
+    'bg-[var(--background)]';
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      {/* Header */}
-      <header className="bg-[var(--card)] border-b border-[var(--border)] sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-16">
-          <div className="flex items-center justify-between h-20">
-            <div className="flex items-center gap-20">
-              <Link href="/" className="text-2xl font-light text-[var(--foreground)] tracking-tight">
-                HISTORIA
-              </Link>
-              <Link
-                href="/memoria"
-                className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-              >
-                Archive
-              </Link>
-            </div>
-            <div className="flex items-center gap-6">
-              {connected && address && (
-                <Link
-                  href="/profile"
-                  className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-                >
-                  Profile
-                </Link>
-              )}
-              <WalletConnect />
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className={`min-h-screen ${pageBg} transition-colors duration-500 flex flex-col`}>
+      <SiteHeader />
 
-      {/* Main Content */}
-      <main className="max-w-4xl mx-auto px-6 lg:px-16 py-12">
-        <div className="mb-8">
-          <Link href="/" className="inline-flex items-center gap-2 text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light">
-            <span>←</span>
-            <span>Back</span>
+      {/* Reveal pending banner */}
+      {hasPendingReveal && (
+        <div className="bg-amber-500 text-white text-xs font-semibold text-center py-3 px-6 tracking-wide uppercase">
+          Reveal window open — confirm your vote below to collect your reward
+        </div>
+      )}
+
+      {/* Revealing phase banner */}
+      {claim.status === 'REVEALING' && !hasPendingReveal && (
+        <div className="bg-amber-50 border-b border-amber-200 text-amber-700 text-xs font-medium text-center py-2.5 px-6">
+          This claim is in the reveal phase — scroll down to confirm your vote.
+        </div>
+      )}
+
+      <main className="flex-1 max-w-3xl w-full mx-auto px-6 lg:px-8 py-12">
+
+        {/* Back */}
+        <div className="mb-10">
+          <Link
+            href="/"
+            className="inline-flex items-center gap-1.5 text-xs text-[var(--subtle)] hover:text-[var(--foreground)] transition-colors uppercase tracking-widest font-medium"
+          >
+            <svg className="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M15 19l-7-7 7-7" />
+            </svg>
+            Claims
           </Link>
         </div>
 
-        {/* Contest Genealogy */}
-        {event.version > 1 && event.parentId && (
-          <div className="bg-[var(--card)] border border-[var(--border)] p-6 mb-6">
-            <div className="flex items-center gap-3">
-              <span className="text-xs text-[var(--muted)] uppercase tracking-wider font-light">Genealogy</span>
-              <div className="flex-1 h-px bg-[var(--border)]"></div>
-            </div>
-            <div className="mt-4 flex items-center gap-3">
-              <Link
-                href={`/event/${event.parentId}`}
-                className="text-sm text-[var(--foreground)] hover:text-[var(--muted)] transition-colors font-light font-mono"
-              >
-                ← Event #{event.parentId} (v{event.version - 1})
-              </Link>
-              <span className="text-xs text-[var(--muted)] font-light">contested by this event</span>
-            </div>
-          </div>
-        )}
+        {/* Claim card */}
+        <div className={`bg-[var(--surface)] rounded-[var(--radius)] border p-8 md:p-10 mb-6 shadow-[var(--shadow-sm)] ${
+          isResolved && claim.outcome === 'ACCEPTED' ? 'border-[var(--border)] border-l-4 border-l-[var(--yes-light)]' :
+          isResolved && claim.outcome === 'REJECTED' ? 'border-[var(--border)] border-l-4 border-l-[var(--no-light)]' :
+          isRevealPhase ? 'border-amber-200' :
+          'border-[var(--border)]'
+        }`}>
 
-        {/* Event Info */}
-        <div className="bg-[var(--card)] border border-[var(--border)] p-8 mb-8">
-          <div className="flex items-start justify-between gap-8 mb-8">
-            <div className="flex-1">
-              <div className="flex items-center gap-4 mb-5">
-                <span className="text-xs font-mono text-[var(--muted)] font-light">#{event.id}</span>
-                <StatusBadge status={event.status} />
-                {event.version > 1 && (
-                  <span className="px-2 py-0.5 text-xs bg-[var(--gray-light)] text-[var(--muted)] font-light">
-                    Contest v{event.version}
-                  </span>
-                )}
-              </div>
-              <h1 className="text-4xl font-light text-[var(--foreground)] leading-tight">{event.description}</h1>
-            </div>
-            {event.outcome && event.outcome !== 'PENDING' && (
-              <div className="flex-shrink-0">
-                <OutcomeBadge outcome={event.outcome} />
-              </div>
+          {/* Badges */}
+          <div className="flex items-center gap-2 mb-6 flex-wrap">
+            <CategoryBadge category={claim.category} />
+            <StatusBadge status={claim.status} />
+            {claim.resolvedAt && (
+              <span className="text-xs text-[var(--subtle)] font-medium ml-1">
+                {new Date(claim.resolvedAt).toLocaleDateString('en-US', { month: 'long', day: 'numeric', year: 'numeric' })}
+              </span>
+            )}
+            {claim.outcome && claim.outcome !== 'PENDING' && (
+              <span className="ml-auto">
+                <OutcomeBadge outcome={claim.outcome} />
+              </span>
             )}
           </div>
 
-          <div className="grid grid-cols-2 md:grid-cols-5 gap-8 pt-8 border-t border-[var(--border)]">
+          {/* Claim statement */}
+          <h1 className="text-2xl md:text-3xl font-bold text-[var(--foreground)] leading-snug mb-6 tracking-tight">
+            {claim.description}
+          </h1>
+
+          {/* Context — styled as document excerpt */}
+          {claim.context && (
+            <div className="mb-8 pl-5 border-l-2 border-[var(--border)]">
+              <p className="text-[11px] text-[var(--subtle)] font-semibold uppercase tracking-wider mb-2">Context</p>
+              <p className="text-sm text-[var(--muted)] leading-relaxed italic">{claim.context}</p>
+            </div>
+          )}
+
+          {/* Meta grid */}
+          <div className={`grid gap-6 pt-6 border-t border-[var(--border)] ${isVotingPhase ? 'grid-cols-2' : 'grid-cols-2 md:grid-cols-4'}`}>
             <div>
-              <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Proposer</p>
-              <p className="text-sm font-mono text-[var(--foreground)] font-light">
-                {event.proposer.slice(0, 8)}...
+              <p className="text-[10px] text-[var(--subtle)] mb-1.5 font-semibold uppercase tracking-wider">Creator</p>
+              <ProfileLink address={claim.proposer} label="" className="text-xs" />
+            </div>
+            <div>
+              <p className="text-[10px] text-[var(--subtle)] mb-1.5 font-semibold uppercase tracking-wider">Stake</p>
+              <p className="text-sm font-bold text-[var(--foreground)]">
+                {(claim.stakeAmount / 1_000_000_000).toFixed(2)} SUI
               </p>
             </div>
-            <div>
-              <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Stake/Vote</p>
-              <p className="text-lg font-light text-[var(--foreground)]">
-                {event.stakeAmount / 1000000} GNOT
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Total Pool</p>
-              <p className="text-lg font-light text-[var(--foreground)]">
-                {(event.stakeAmount * event.commits) / 1000000} GNOT
-              </p>
-            </div>
-            <div>
-              <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Commits</p>
-              <p className="text-lg font-light text-[var(--foreground)]">{event.commits}</p>
-            </div>
-            <div>
-              <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Reveals</p>
-              <p className="text-lg font-light text-[var(--foreground)]">{event.reveals}</p>
-            </div>
+            {!isVotingPhase && (
+              <>
+                <div>
+                  <p className="text-[10px] text-[var(--subtle)] mb-1.5 font-semibold uppercase tracking-wider">Pool</p>
+                  <p className="text-sm font-bold text-[var(--foreground)]">
+                    {claim.poolSui.toFixed ? claim.poolSui.toFixed(2) : claim.poolSui} SUI
+                  </p>
+                </div>
+                <div>
+                  <p className="text-[10px] text-[var(--subtle)] mb-1.5 font-semibold uppercase tracking-wider">Participants</p>
+                  <p className="text-sm font-bold text-[var(--foreground)]">{claim.commits}</p>
+                </div>
+              </>
+            )}
           </div>
 
-          {/* Countdown Timers */}
-          {event.commitEnd && event.revealEnd && (event.status === 'COMMIT' || event.status === 'REVEAL') && (() => {
-            const now = Math.floor(Date.now() / 1000);
-            const isCommitPhase = now < event.commitEnd;
-            const isRevealPhase = now >= event.commitEnd && now < event.revealEnd;
+          {/* Countdown */}
+          {claim.commitEnd && claim.revealEnd && (claim.status === 'VOTING' || claim.status === 'REVEALING') && (
+            <div className={`pt-6 border-t border-[var(--border)] mt-6 rounded-[var(--radius-sm)] px-4 py-3 ${isRevealPhase ? 'bg-amber-50 border border-amber-200' : 'bg-[var(--surface-raised)]'}`}>
+              {isVotingPhase && <CountdownTimer endTimestamp={claim.commitEnd} label="Voting closes in" />}
+              {isRevealPhase && <CountdownTimer endTimestamp={claim.revealEnd} label="Reveal closes in" variant="reveal" />}
+            </div>
+          )}
 
-            if (isCommitPhase) {
-              return (
-                <div className="flex gap-4 pt-8 border-t border-[var(--border)] mt-8">
-                  <div className="flex-1">
-                    <CountdownTimer endTimestamp={event.commitEnd} label="Commit Phase Ends In" />
+          {/* Final results */}
+          {isResolved && hasVotes && totalVotes > 0 && (
+            <div className="pt-6 border-t border-[var(--border)] mt-6">
+              <p className="text-[10px] text-[var(--subtle)] font-semibold uppercase tracking-wider mb-5">Final Results</p>
+              <div className="space-y-3">
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold w-8" style={{ color: 'var(--yes-light)' }}>YES</span>
+                  <div className="flex-1 h-1.5 bg-[var(--surface-raised)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${forPercent}%`, background: 'var(--yes-light)' }}
+                    />
                   </div>
+                  <span className="text-xs font-bold text-[var(--foreground)] w-24 text-right tabular-nums">
+                    {claim.votesFor} ({forPercent.toFixed(0)}%)
+                  </span>
                 </div>
-              );
-            }
-
-            if (isRevealPhase) {
-              return (
-                <div className="flex gap-4 pt-8 border-t border-[var(--border)] mt-8">
-                  <div className="flex-1">
-                    <CountdownTimer endTimestamp={event.revealEnd} label="Reveal Phase Ends In" />
+                <div className="flex items-center gap-3">
+                  <span className="text-xs font-bold w-8" style={{ color: 'var(--no-light)' }}>NO</span>
+                  <div className="flex-1 h-1.5 bg-[var(--surface-raised)] rounded-full overflow-hidden">
+                    <div
+                      className="h-full rounded-full"
+                      style={{ width: `${againstPercent}%`, background: 'var(--no-light)' }}
+                    />
                   </div>
-                </div>
-              );
-            }
-
-            return null;
-          })()}
-
-          {event.votesFor !== undefined && event.votesAgainst !== undefined && (() => {
-            const total = event.votesFor + event.votesAgainst;
-            const forPercent = total > 0 ? (event.votesFor / total * 100).toFixed(1) : '0.0';
-            const againstPercent = total > 0 ? (event.votesAgainst / total * 100).toFixed(1) : '0.0';
-
-            return (
-              <div className="pt-8 border-t border-[var(--border)] mt-8">
-                <div className="grid grid-cols-2 gap-8 mb-4">
-                  <div>
-                    <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Verified</p>
-                    <p className="text-4xl font-light text-[var(--foreground)]">{event.votesFor}</p>
-                    <p className="text-sm text-[var(--muted)] mt-2 font-light">{forPercent}%</p>
-                  </div>
-                  <div>
-                    <p className="text-xs text-[var(--muted)] mb-3 uppercase tracking-widest font-light">Rejected</p>
-                    <p className="text-4xl font-light text-[var(--foreground)]">{event.votesAgainst}</p>
-                    <p className="text-sm text-[var(--muted)] mt-2 font-light">{againstPercent}%</p>
-                  </div>
-                </div>
-                <div className="h-2 bg-[var(--border)] overflow-hidden">
-                  <div
-                    className="h-full bg-[var(--foreground)] transition-all"
-                    style={{ width: `${forPercent}%` }}
-                  />
+                  <span className="text-xs font-bold text-[var(--foreground)] w-24 text-right tabular-nums">
+                    {claim.votesAgainst} ({againstPercent.toFixed(0)}%)
+                  </span>
                 </div>
               </div>
-            );
-          })()}
+            </div>
+          )}
         </div>
 
         {/* Actions */}
-        <div>
-          {(() => {
-            const now = Math.floor(Date.now() / 1000);
-            const isCommitPhase = event.commitEnd && now < event.commitEnd;
-            const isRevealPhase = event.commitEnd && event.revealEnd && now >= event.commitEnd && now < event.revealEnd;
-            const needsResolve = event.revealEnd && now >= event.revealEnd && event.status !== 'RESOLVED' && event.status !== 'VOIDED';
+        <div className="space-y-4">
+          {claim.status === 'VOTING' && isVotingPhase && (
+            <CommitForm
+              eventId={claim.id}
+              stakeAmount={claim.stakeAmount}
+              currentCommits={claim.commits}
+              poolSui={claim.poolSui}
+              onSuccess={() => window.location.reload()}
+            />
+          )}
 
-            // Commit Phase
-            if (event.status === 'COMMIT' && isCommitPhase) {
-              return (
-                <CommitForm
-                  eventId={event.id}
-                  stakeAmount={event.stakeAmount}
-                  currentCommits={event.commits}
-                  poolGnot={event.poolGnot}
-                  onSuccess={() => window.location.reload()}
-                />
-              );
-            }
+          {(claim.status === 'REVEALING' || (claim.status === 'VOTING' && !isVotingPhase)) && isRevealPhase && !needsResolve && (
+            <RevealForm
+              eventId={claim.id}
+              revealEnd={claim.revealEnd}
+              onSuccess={() => window.location.reload()}
+            />
+          )}
 
-            // Reveal Phase
-            if ((event.status === 'COMMIT' && !isCommitPhase) || (event.status === 'REVEAL') || isRevealPhase) {
-              // If reveal phase ended but not resolved yet, show resolve button
-              if (needsResolve) {
-                return (
-                  <ResolveButton
-                    eventId={event.id}
-                    revealEndTimestamp={event.revealEnd}
-                    onSuccess={() => window.location.reload()}
-                  />
-                );
-              }
+          {needsResolve && (
+            <ResolveButton
+              eventId={claim.id}
+              revealEndTimestamp={claim.revealEnd}
+              onSuccess={() => window.location.reload()}
+            />
+          )}
 
-              // Otherwise show reveal form
-              return (
-                <RevealForm
-                  eventId={event.id}
-                  onSuccess={() => window.location.reload()}
-                />
-              );
-            }
+          {isResolved && userWon && claim.rewardPerWinner !== undefined && (
+            <ClaimRewardButton
+              eventId={claim.id}
+              rewardPerWinner={claim.rewardPerWinner}
+              stakeAmount={claim.stakeAmount}
+              onSuccess={() => window.location.reload()}
+            />
+          )}
 
-            // Needs resolution (reveal phase ended)
-            if (needsResolve) {
-              return (
-                <ResolveButton
-                  eventId={event.id}
-                  revealEndTimestamp={event.revealEnd}
-                  onSuccess={() => window.location.reload()}
-                />
-              );
-            }
+          {isResolved && claim.outcome === 'TIED' && savedCommit && claim.rewardPerWinner !== undefined && (
+            <ClaimRewardButton
+              eventId={claim.id}
+              rewardPerWinner={0}
+              stakeAmount={claim.stakeAmount}
+              isTie={true}
+              onSuccess={() => window.location.reload()}
+            />
+          )}
 
-            return null;
-          })()}
-
-          {event.status === 'RESOLVED' && (
-            <div className="py-16 bg-[var(--card)] border border-[var(--border)] text-center">
-              <p className="text-base text-[var(--foreground)] font-light uppercase tracking-wider">
-                Event resolved — Outcome: {event.outcome}
-              </p>
-              <p className="text-sm text-[var(--muted)] font-light mt-4">
-                Stakes have been distributed to winners
+          {isResolved && !userWon && claim.outcome !== 'TIED' && (
+            <div className="py-10 bg-[var(--surface)] rounded-[var(--radius)] border border-[var(--border)] text-center shadow-[var(--shadow-sm)]">
+              <div className="mb-3">
+                {(claim.outcome === 'ACCEPTED' || claim.outcome === 'REJECTED') && (
+                  <OutcomeBadge outcome={claim.outcome} />
+                )}
+              </div>
+              <p className="text-sm text-[var(--subtle)]">
+                Stakes have been distributed to the winning side.
               </p>
             </div>
           )}
 
-          {event.status === 'VOIDED' && (
-            <div className="py-16 bg-[var(--card)] border border-[var(--border)] text-center">
-              <p className="text-base text-[var(--muted)] font-light uppercase tracking-wider">
-                Event voided (no reveals)
-              </p>
+          {isVoided && (
+            <div className="py-10 bg-[var(--surface)] rounded-[var(--radius)] border border-[var(--border)] text-center shadow-[var(--shadow-sm)]">
+              <p className="text-sm font-semibold text-[var(--muted)]">Voided</p>
+              <p className="text-xs text-[var(--subtle)] mt-1.5">No reveals were submitted. All stakes have been refunded.</p>
             </div>
           )}
         </div>
 
-        {/* Hash Debugger (show during reveal phase) */}
-        {(() => {
-          const now = Math.floor(Date.now() / 1000);
-          const isRevealPhase = event.commitEnd && event.revealEnd && now >= event.commitEnd && now < event.revealEnd;
-
-          return null;
-        })()}
       </main>
 
       <Footer />

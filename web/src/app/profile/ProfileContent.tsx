@@ -3,68 +3,71 @@
 import { useState, useEffect } from 'react';
 import Link from 'next/link';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { render, parseEventList, parseEventDetail, getUserStats, UserStats } from '@/lib/gno';
+import { fetchEvents, fetchUserStats } from '@/lib/sui';
+import { UserStats } from '@/lib/types';
 import { HistoriaEvent } from '@/lib/types';
+import { SiteHeader } from '@/components/SiteHeader';
+import { ClaimCard } from '@/components/ClaimCard';
+import { EmptyState } from '@/components/EmptyState';
 import { WalletConnect } from '@/components/WalletConnect';
 import { useWallet } from '@/contexts/WalletContext';
 import { Footer } from '@/components/Footer';
-import { calculateUserScore, getScoreLabel } from '@/lib/scoring';
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false);
+  const handleCopy = async () => {
+    await navigator.clipboard.writeText(text);
+    setCopied(true);
+    setTimeout(() => setCopied(false), 2000);
+  };
+  return (
+    <button
+      onClick={handleCopy}
+      className="inline-flex items-center gap-1 px-2 py-1 text-[11px] text-[var(--subtle)] hover:text-[var(--foreground)] border border-[var(--border)] rounded-[var(--radius-sm)] transition-all"
+    >
+      {copied ? (
+        <>
+          <svg className="w-3 h-3 text-[var(--yes-light)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M5 13l4 4L19 7" />
+          </svg>
+          Copied
+        </>
+      ) : (
+        <>
+          <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 16H6a2 2 0 01-2-2V6a2 2 0 012-2h8a2 2 0 012 2v2m-6 12h8a2 2 0 002-2v-8a2 2 0 00-2-2h-8a2 2 0 00-2 2v8a2 2 0 002 2z" />
+          </svg>
+          Copy
+        </>
+      )}
+    </button>
+  );
+}
 
 export default function ProfileContent() {
   const { connected, address } = useWallet();
   const searchParams = useSearchParams();
   const router = useRouter();
-  const [searchAddress, setSearchAddress] = useState('');
 
-  // Get address from URL params or use connected wallet address
   const targetAddress = searchParams.get('address') || address;
-  const [allEvents, setAllEvents] = useState<HistoriaEvent[]>([]);
-  const [detailedEvents, setDetailedEvents] = useState<HistoriaEvent[]>([]);
-  const [userStats, setUserStats] = useState<UserStats | null>(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [error, setError] = useState<string | null>(null);
-
-  const handleSearch = (e: React.FormEvent) => {
-    e.preventDefault();
-    if (searchAddress.trim()) {
-      router.push(`/profile?address=${searchAddress.trim()}`);
-    }
-  };
-
-  const clearSearch = () => {
-    setSearchAddress('');
-    router.push('/profile');
-  };
-
   const isViewingOwnProfile = targetAddress === address;
 
+  const [detailedEvents, setDetailedEvents] = useState<HistoriaEvent[]>([]);
+  const [userStats, setUserStats] = useState<UserStats | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
   useEffect(() => {
+    if (!targetAddress) return;
+
     async function loadData() {
-      if (!targetAddress) return;
-
+      setIsLoading(true);
       try {
-        setIsLoading(true);
-
-        // Load events list
-        const markdown = await render('');
-        const parsed = parseEventList(markdown);
-        setAllEvents(parsed);
-
-        // Load details for first 50 events
-        const detailPromises = parsed.slice(0, 50).map(async (e) => {
-          try {
-            const detailMd = await render(e.id);
-            return parseEventDetail(detailMd);
-          } catch {
-            return e;
-          }
-        });
-
-        const details = await Promise.all(detailPromises);
-        setDetailedEvents(details.filter(Boolean) as HistoriaEvent[]);
-
-        // Load user stats from blockchain
-        const stats = await getUserStats(targetAddress);
+        const [all, stats] = await Promise.all([
+          fetchEvents(),
+          fetchUserStats(targetAddress!),
+        ]);
+        setDetailedEvents(all);
         setUserStats(stats);
       } catch (err) {
         setError(err instanceof Error ? err.message : 'Failed to load profile');
@@ -76,251 +79,194 @@ export default function ProfileContent() {
     loadData();
   }, [targetAddress]);
 
-  // If no target address and not connected, show connect message
   if (!targetAddress) {
     return (
-      <div className="min-h-screen bg-[var(--background)]">
-        <header className="bg-[var(--card)] border-b border-[var(--border)] sticky top-0 z-50">
-          <div className="max-w-7xl mx-auto px-6 lg:px-16">
-            <div className="flex items-center justify-between h-20">
-              <div className="flex items-center gap-20">
-                <Link href="/" className="text-2xl font-light text-[var(--foreground)] tracking-tight">
-                  HISTORIA
-                </Link>
-              </div>
-              <WalletConnect />
-            </div>
-          </div>
-        </header>
-        <div className="flex items-center justify-center min-h-[80vh]">
-          <div className="text-center">
-            <p className="text-lg text-[var(--muted)] font-light mb-6">Connect your wallet to view your profile</p>
+      <div className="min-h-screen bg-[var(--background)] flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="text-center space-y-5">
+            <p className="text-sm text-[var(--muted)]">Connect your wallet to view your profile</p>
             <WalletConnect />
           </div>
         </div>
+        <Footer />
       </div>
     );
   }
 
-  // Filter events proposed by this user
   const myProposals = detailedEvents.filter(e =>
+    e.proposer.toLowerCase() === targetAddress.toLowerCase() ||
     e.proposer.toLowerCase().includes(targetAddress.toLowerCase().slice(2, 10))
   );
 
-  // Get commits from localStorage (only for own profile, for reveal alerts)
-  const myCommits: { eventId: string; vote: boolean; hash: string }[] = [];
-  if (isViewingOwnProfile && address) {
+  const needsReveal: HistoriaEvent[] = [];
+  if (isViewingOwnProfile && address && typeof window !== 'undefined') {
     for (let i = 0; i < localStorage.length; i++) {
       const key = localStorage.key(i);
-      if (key?.startsWith(`historia_commit_`) && !key.includes('_new_') && key.includes(address)) {
+      if (key?.startsWith('historia_commit_') && !key.includes('_new_') && key.includes(address)) {
         try {
-          const data = JSON.parse(localStorage.getItem(key) || '{}');
           const parts = key.split('_');
           const eventId = parts[2];
           if (eventId && !isNaN(Number(eventId))) {
-            myCommits.push({ eventId, vote: data.vote, hash: data.hash });
+            const event = detailedEvents.find(e => e.id === eventId && e.status === 'REVEALING');
+            if (event && !needsReveal.find(e => e.id === eventId)) {
+              needsReveal.push(event);
+            }
           }
-        } catch {
-          // Ignore invalid data
-        }
+        } catch { /* ignore */ }
       }
     }
   }
 
-  // Find events that need revealing (only for own profile)
-  const needsReveal = isViewingOwnProfile
-    ? detailedEvents.filter(e =>
-        e.status === 'REVEAL' && myCommits.some(c => c.eventId === e.id)
-      )
-    : [];
-
-  // Use blockchain stats
-  const totalVoted = userStats?.totalVotes || 0;
-  const winRate = userStats?.winRate || 0;
-  const totalStaked = (userStats?.totalStaked || 0) / 1000000; // Convert ugnot to GNOT
-  const totalProposed = userStats?.proposedEvents || 0;
-
-  // Estimate net gain (simplified calculation)
-  const wonVotes = userStats?.wonVotes || 0;
-  const lostVotes = (userStats?.totalReveals || 0) - wonVotes;
-  const avgStakePerVote = totalVoted > 0 ? totalStaked / totalVoted : 0;
-
-  // Rough estimate: won votes = +50% profit, lost votes = -100% loss
-  const estimatedWon = wonVotes * avgStakePerVote * 0.5;
-  const estimatedLost = lostVotes * avgStakePerVote;
-  const netGain = estimatedWon - estimatedLost;
-
-  // Calculate user score (0-10)
-  const userScore = calculateUserScore(winRate, totalVoted, totalStaked, myProposals);
-  const scoreInfo = getScoreLabel(userScore);
+  const totalVoted   = userStats?.totalVotes  || 0;
+  const winRate      = userStats?.winRate      || 0;
+  const totalStaked  = (userStats?.totalStaked || 0) / 1_000_000_000;
+  const totalProposed = myProposals.length;
 
   if (isLoading) {
     return (
-      <div className="min-h-screen bg-[var(--background)] flex items-center justify-center">
-        <div className="flex flex-col items-center">
-          <div className="w-10 h-10 border border-[var(--border)] border-t-[var(--foreground)] animate-spin mb-6"></div>
-          <p className="text-sm text-[var(--muted)] font-light">Loading profile...</p>
+      <div className="min-h-screen bg-[var(--background)] flex flex-col">
+        <SiteHeader />
+        <div className="flex-1 flex items-center justify-center">
+          <div className="flex flex-col items-center gap-4">
+            <div className="w-6 h-6 border-2 border-[var(--border)] border-t-[var(--foreground)] rounded-full animate-spin" />
+            <p className="text-xs text-[var(--subtle)] font-medium uppercase tracking-widest">Loading</p>
+          </div>
         </div>
+        <Footer />
       </div>
     );
   }
 
   return (
-    <div className="min-h-screen bg-[var(--background)]">
-      <header className="bg-[var(--card)] border-b border-[var(--border)] sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-6 lg:px-16">
-          <div className="flex items-center justify-between h-20">
-            <div className="flex items-center gap-20">
-              <Link href="/" className="text-2xl font-light text-[var(--foreground)] tracking-tight">
-                HISTORIA
-              </Link>
-              <Link
-                href="/memoria"
-                className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-              >
-                Archive
-              </Link>
-            </div>
-            <div className="flex items-center gap-6">
-              {connected && address && (
-                <Link
-                  href="/profile"
-                  className="text-sm text-[var(--muted)] hover:text-[var(--foreground)] transition-colors font-light"
-                >
-                  Profile
-                </Link>
-              )}
-              <WalletConnect />
-            </div>
-          </div>
-        </div>
-      </header>
+    <div className="min-h-screen bg-[var(--background)] flex flex-col">
+      <SiteHeader />
 
-      {/* Search Bar */}
-      <section className="max-w-7xl mx-auto px-6 lg:px-16 pt-8">
-        <form onSubmit={handleSearch} className="flex gap-3">
-          <input
-            type="text"
-            value={searchAddress}
-            onChange={(e) => setSearchAddress(e.target.value)}
-            placeholder="Search user by address (e.g., g1abc...)"
-            className="flex-1 px-5 py-3 bg-[var(--card)] border border-[var(--border)] text-[var(--foreground)] placeholder-[var(--muted)] focus:outline-none focus:border-[var(--foreground)] transition-colors font-mono text-sm font-light"
-          />
-          <button
-            type="submit"
-            className="px-8 py-3 bg-[var(--foreground)] text-[var(--background)] text-sm font-light hover:bg-[var(--muted)] transition-colors uppercase tracking-wider"
-          >
-            Search
-          </button>
+      <div className="flex-1 max-w-4xl w-full mx-auto px-6 lg:px-8 py-16">
+
+        {/* Profile header */}
+        <section className="mb-14 pb-10 border-b border-[var(--border)]">
           {!isViewingOwnProfile && (
-            <button
-              type="button"
-              onClick={clearSearch}
-              className="px-8 py-3 border border-[var(--border)] text-[var(--foreground)] text-sm font-light hover:border-[var(--foreground)] transition-colors uppercase tracking-wider"
-            >
-              My Profile
-            </button>
+            <div className="mb-5">
+              <span className="inline-flex items-center px-2.5 py-1 text-[11px] font-medium bg-[var(--surface-raised)] text-[var(--subtle)] border border-[var(--border)] rounded-full uppercase tracking-wider">
+                Public Profile
+              </span>
+            </div>
           )}
-        </form>
-      </section>
 
-      <main className="max-w-7xl mx-auto px-6 lg:px-16 py-16">
-        <div className="mb-12 flex items-start justify-between">
-          <div>
-            <div className="flex items-center gap-4 mb-4">
-              <h1 className="text-5xl font-light text-[var(--foreground)] tracking-tight">Profile</h1>
-              {!isViewingOwnProfile && (
-                <span className="px-3 py-1 bg-[var(--card)] border border-[var(--border)] text-xs text-[var(--muted)] font-light uppercase tracking-wider">
-                  Viewing Other User
-                </span>
-              )}
+          <div className="flex items-start justify-between gap-6">
+            <div>
+              <div className="text-[10px] uppercase tracking-[0.3em] text-[var(--subtle)] font-medium mb-4">
+                {isViewingOwnProfile ? 'My Profile' : 'Participant'}
+              </div>
+              <div className="flex items-center gap-3 flex-wrap">
+                <code className="text-base font-mono font-semibold text-[var(--foreground)] tracking-tight">
+                  {targetAddress.slice(0, 10)}...{targetAddress.slice(-8)}
+                </code>
+                <CopyButton text={targetAddress} />
+              </div>
             </div>
-            <p className="text-lg text-[var(--muted)] font-light font-mono">
-              {targetAddress.slice(0, 12)}...{targetAddress.slice(-8)}
-            </p>
-          </div>
-          <div className="text-right">
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light mb-2">
-              User Score
-            </div>
-            <div className="text-6xl font-light text-[var(--foreground)]">
-              {userScore.toFixed(1)}<span className="text-3xl">/10</span>
-            </div>
-            <div className={`text-sm font-light mt-2 ${scoreInfo.color}`}>
-              {scoreInfo.label}
-            </div>
-          </div>
-        </div>
 
-        {/* Reveal Alerts (only for own profile) */}
+            {isViewingOwnProfile && !connected && (
+              <WalletConnect />
+            )}
+          </div>
+
+          {/* Stats */}
+          <div className="flex items-center gap-10 mt-8">
+            <div>
+              <p className="text-2xl font-bold text-[var(--foreground)] tracking-tight">{totalProposed}</p>
+              <p className="text-[11px] text-[var(--subtle)] font-medium uppercase tracking-wider mt-0.5">Proposed</p>
+            </div>
+            <div className="w-px h-8 bg-[var(--border)]" />
+            <div>
+              <p className="text-2xl font-bold text-[var(--foreground)] tracking-tight">{totalVoted}</p>
+              <p className="text-[11px] text-[var(--subtle)] font-medium uppercase tracking-wider mt-0.5">Votes cast</p>
+            </div>
+            <div className="w-px h-8 bg-[var(--border)]" />
+            <div>
+              <p className="text-2xl font-bold text-[var(--foreground)] tracking-tight">{totalStaked.toFixed(1)}</p>
+              <p className="text-[11px] text-[var(--subtle)] font-medium uppercase tracking-wider mt-0.5">SUI staked</p>
+            </div>
+            <div className="w-px h-8 bg-[var(--border)]" />
+            <div>
+              <p className={`text-2xl font-bold tracking-tight ${winRate >= 60 ? 'text-[var(--yes-light)]' : winRate >= 40 ? 'text-[var(--foreground)]' : winRate > 0 ? 'text-[var(--no-light)]' : 'text-[var(--foreground)]'}`}>
+                {winRate > 0 ? `${winRate}%` : '—'}
+              </p>
+              <p className="text-[11px] text-[var(--subtle)] font-medium uppercase tracking-wider mt-0.5">Win rate</p>
+            </div>
+          </div>
+        </section>
+
+        {error && (
+          <div className="mb-8 p-4 rounded-[var(--radius)] bg-[var(--no-bg)] border border-[var(--no-border)] text-[var(--no)] text-sm">
+            {error}
+          </div>
+        )}
+
+        {/* Reveal alerts */}
         {needsReveal.length > 0 && (
-          <div className="bg-[var(--card)] border-2 border-[var(--foreground)] p-8 mb-16">
-            <div className="flex items-start gap-6">
-              <div className="flex-shrink-0 w-12 h-12 flex items-center justify-center bg-[var(--foreground)] text-[var(--background)]">
-                <span className="text-2xl">⏰</span>
+          <div className="mb-10 bg-amber-50 border border-amber-200 rounded-[var(--radius)] p-6">
+            <div className="flex items-start gap-3 mb-4">
+              <div className="w-7 h-7 rounded-full bg-amber-100 flex items-center justify-center flex-shrink-0 mt-0.5">
+                <svg className="w-3.5 h-3.5 text-amber-600" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z" />
+                </svg>
               </div>
-              <div className="flex-1">
-                <h2 className="text-2xl font-light text-[var(--foreground)] mb-3">
-                  {needsReveal.length} Vote{needsReveal.length > 1 ? 's' : ''} Need Revealing
+              <div>
+                <h2 className="text-sm font-semibold text-amber-800 mb-1">
+                  {needsReveal.length} pending reveal{needsReveal.length > 1 ? 's' : ''}
                 </h2>
-                <p className="text-sm text-[var(--muted)] font-light mb-6">
-                  The following events are in the reveal phase. Reveal your vote before the deadline to claim your stake.
+                <p className="text-xs text-amber-700">
+                  Confirm your votes before the deadline to claim your reward.
                 </p>
-                <div className="space-y-3">
-                  {needsReveal.map(event => (
-                    <Link
-                      key={event.id}
-                      href={`/event/${event.id}`}
-                      className="block p-4 bg-[var(--background)] border border-[var(--border)] hover:border-[var(--foreground)] transition-colors"
-                    >
-                      <div className="flex items-center justify-between">
-                        <div className="flex-1">
-                          <div className="flex items-center gap-3 mb-2">
-                            <span className="text-xs font-mono text-[var(--muted)] font-light">#{event.id}</span>
-                            <span className="px-2 py-0.5 text-xs bg-yellow-100 text-yellow-800 font-light">
-                              REVEAL PHASE
-                            </span>
-                          </div>
-                          <p className="text-sm text-[var(--foreground)] font-light">{event.description}</p>
-                        </div>
-                        <div className="flex items-center gap-3 ml-6">
-                          <span className="text-sm text-[var(--foreground)] font-light">Reveal Now →</span>
-                        </div>
-                      </div>
-                    </Link>
-                  ))}
-                </div>
               </div>
+            </div>
+            <div className="space-y-2">
+              {needsReveal.map(event => (
+                <Link
+                  key={event.id}
+                  href={`/event/${event.id}`}
+                  className="flex items-center justify-between p-3 bg-white border border-amber-200 rounded-[var(--radius-sm)] hover:border-amber-400 transition-all"
+                >
+                  <p className="text-sm text-[var(--foreground)] line-clamp-1 flex-1">{event.description}</p>
+                  <span className="text-xs font-semibold text-amber-600 ml-3 flex-shrink-0">Reveal →</span>
+                </Link>
+              ))}
             </div>
           </div>
         )}
 
-        {/* Stats Grid */}
-        <div className="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-px bg-[var(--border)] mb-16">
-          <div className="bg-[var(--card)] p-6">
-            <div className="text-3xl font-light text-[var(--foreground)] mb-2">{totalProposed}</div>
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light">Events Proposed</div>
-          </div>
-          <div className="bg-[var(--card)] p-6">
-            <div className="text-3xl font-light text-[var(--foreground)] mb-2">{totalVoted}</div>
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light">Total Votes</div>
-          </div>
-          <div className="bg-[var(--card)] p-6">
-            <div className="text-3xl font-light text-[var(--foreground)] mb-2">{totalStaked.toFixed(1)}</div>
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light">GNOT Staked</div>
-          </div>
-          <div className="bg-[var(--card)] p-6">
-            <div className={`text-3xl font-light mb-2 ${netGain >= 0 ? 'text-green-600' : 'text-red-600'}`}>
-              {netGain >= 0 ? '+' : ''}{netGain.toFixed(2)}
+        {/* Proposed claims */}
+        <div className="mb-16">
+          <div className="flex items-end justify-between mb-8">
+            <div>
+              <h2 className="text-lg font-semibold text-[var(--foreground)] tracking-tight">Proposed Claims</h2>
+              <p className="text-sm text-[var(--subtle)] mt-1">
+                {isViewingOwnProfile ? 'Claims you have submitted to the protocol' : 'Claims submitted by this address'}
+              </p>
             </div>
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light">Net Gain (GNOT)</div>
+            {myProposals.length > 0 && (
+              <span className="text-xs text-[var(--subtle)] font-medium">{myProposals.length}</span>
+            )}
           </div>
-          <div className="bg-[var(--card)] p-6">
-            <div className="text-3xl font-light text-[var(--foreground)] mb-2">{winRate.toFixed(0)}%</div>
-            <div className="text-xs text-[var(--muted)] uppercase tracking-widest font-light">Win Rate</div>
-          </div>
+
+          {myProposals.length === 0 ? (
+            <EmptyState
+              title="No claims proposed"
+              description={isViewingOwnProfile ? 'Submit your first claim to contribute to the collective archive.' : 'This address has not proposed any claims.'}
+              action={isViewingOwnProfile ? { label: 'Submit a Claim', href: '/submit' } : undefined}
+            />
+          ) : (
+            <div className="space-y-4">
+              {myProposals.map(claim => (
+                <ClaimCard key={claim.id} claim={claim} />
+              ))}
+            </div>
+          )}
         </div>
-      </main>
+
+      </div>
 
       <Footer />
     </div>

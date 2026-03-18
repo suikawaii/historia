@@ -59,7 +59,7 @@ export function FeeInfo() {
 
           <div className="p-4 bg-[var(--gray-light)] border border-[var(--border)]">
             <p className="text-xs font-light">
-              <strong>Example:</strong> 100 GNOT losing pool → 1 GNOT to proposer, 1 GNOT to founder, 98 GNOT distributed to winners
+              <strong>Example:</strong> 100 SUI losing pool → 1 SUI to proposer, 1 SUI to founder, 98 SUI distributed to winners
             </p>
           </div>
         </div>

@@ -1,7 +1,7 @@
 'use client';
 
 import { useState } from 'react';
-import { generateCommitHash } from '@/lib/hash';
+import { generateCommitHashHex } from '@/lib/hash';
 import { useWallet } from '@/contexts/WalletContext';
 
 export function HashDebugger() {
@@ -12,7 +12,7 @@ export function HashDebugger() {
 
   const handleCompute = () => {
     if (!address || !secret) return;
-    const hash = generateCommitHash(address, vote, secret);
+    const hash = generateCommitHashHex(address, vote, secret);
     setComputedHash(hash);
   };
 

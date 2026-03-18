@@ -2,84 +2,56 @@
 
 import { useState, useEffect } from 'react';
 import { useWallet } from '@/contexts/WalletContext';
-import { generateCommitHash } from '@/lib/hash';
-import { callHistoria } from '@/lib/wallet';
+import { revealVote } from '@/lib/wallet';
 import { CommitData } from '@/lib/types';
 
 interface RevealFormProps {
   eventId: string;
+  revealEnd?: number;
   onSuccess?: () => void;
 }
 
-export function RevealForm({ eventId, onSuccess }: RevealFormProps) {
+export function RevealForm({ eventId, revealEnd, onSuccess }: RevealFormProps) {
   const { connected, address } = useWallet();
-  const [vote, setVote] = useState<boolean | null>(null);
-  const [secret, setSecret] = useState('');
   const [savedCommit, setSavedCommit] = useState<CommitData | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  const [hashMatches, setHashMatches] = useState<boolean | null>(null);
 
-  // Try to load saved commit data
   useEffect(() => {
     if (!address) return;
 
+    // Primary key: set by CommitForm or SubmitForm after indexing
     const stored = localStorage.getItem(`historia_commit_${eventId}_${address}`);
     if (stored) {
       try {
-        const data = JSON.parse(stored) as CommitData;
-        setSavedCommit(data);
-        setVote(data.vote);
-        setSecret(data.secret);
-      } catch {
-        // Invalid stored data
-      }
+        setSavedCommit(JSON.parse(stored) as CommitData);
+        return;
+      } catch { /* ignore */ }
+    }
+
+    // Fallback: proposer's secret saved before indexing completed (SubmitForm pending key)
+    const pending = localStorage.getItem(`historia_pending_${address}`);
+    if (pending) {
+      try {
+        const data = JSON.parse(pending) as CommitData;
+        // Migrate to the correct key now that we know the eventId
+        const withId = { ...data, eventId };
+        localStorage.setItem(`historia_commit_${eventId}_${address}`, JSON.stringify(withId));
+        localStorage.removeItem(`historia_pending_${address}`);
+        setSavedCommit(withId);
+      } catch { /* ignore */ }
     }
   }, [address, eventId]);
 
-  // Validate hash in real-time
-  useEffect(() => {
-    if (!address || !savedCommit || vote === null || !secret) {
-      setHashMatches(null);
-      return;
-    }
-
-    const computedHash = generateCommitHash(address, vote, secret.trim());
-    setHashMatches(computedHash === savedCommit.hash);
-  }, [address, vote, secret, savedCommit]);
-
-  const handleSubmit = async (e: React.FormEvent) => {
-    e.preventDefault();
-
-    if (!address || vote === null || !secret) return;
-
-    // Trim secret to remove any accidental whitespace
-    const trimmedSecret = secret.trim();
+  const handleReveal = async () => {
+    if (!address || !savedCommit) return;
 
     setIsSubmitting(true);
     setError(null);
 
     try {
-      // Verify against saved commit if available
-      if (savedCommit) {
-        const expectedHash = generateCommitHash(address, vote, trimmedSecret);
-        if (expectedHash !== savedCommit.hash) {
-          setError(`Hash mismatch! Your inputs don't match your original commit. Expected: ${savedCommit.hash.substring(0, 16)}...`);
-          setIsSubmitting(false);
-          return;
-        }
-      }
-
-      await callHistoria(
-        address,
-        'RevealVote',
-        [eventId, vote ? 'true' : 'false', trimmedSecret],
-        '' // No coins needed for reveal
-      );
-
-      // Clear stored commit data
+      await revealVote(BigInt(eventId), savedCommit.vote, savedCommit.secret.trim());
       localStorage.removeItem(`historia_commit_${eventId}_${address}`);
-
       onSuccess?.();
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Transaction failed');
@@ -88,122 +60,109 @@ export function RevealForm({ eventId, onSuccess }: RevealFormProps) {
     }
   };
 
+  // Urgency: less than 1 hour remaining
+  const isUrgent = revealEnd !== undefined && (revealEnd - Date.now()) < 3_600_000 && (revealEnd - Date.now()) > 0;
+  const minutesLeft = revealEnd ? Math.ceil((revealEnd - Date.now()) / 60_000) : null;
+
   if (!connected) {
     return (
-      <div className="py-24 text-center bg-[var(--card)] border border-[var(--border)]">
-        <p className="text-[var(--muted)] text-base font-light">Connect your wallet to reveal</p>
+      <div className="py-16 text-center bg-white rounded-[var(--radius)] border border-[var(--border)] shadow-[var(--shadow)]">
+        <p className="text-[var(--muted)] font-medium">Connect your wallet to reveal</p>
+      </div>
+    );
+  }
+
+  // Detect wallet account switch — if the commit was made with a different address
+  const wrongAccount = savedCommit && savedCommit.address && savedCommit.address !== address;
+
+  if (!savedCommit || wrongAccount) {
+    return (
+      <div className="py-12 bg-white rounded-[var(--radius)] border border-[var(--border)] shadow-[var(--shadow)] text-center px-8">
+        <div className="w-12 h-12 rounded-full bg-[var(--gray-light)] flex items-center justify-center mx-auto mb-4">
+          <svg className="w-5 h-5 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9.172 16.172a4 4 0 015.656 0M9 10h.01M15 10h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
+        {wrongAccount ? (
+          <>
+            <p className="text-base font-semibold text-[var(--foreground)] mb-2">Wrong account</p>
+            <p className="text-sm text-[var(--muted)]">
+              This vote was committed with account{' '}
+              <span className="font-mono text-xs">{savedCommit!.address?.slice(0, 10)}…</span>.
+              Switch to that account in your wallet to reveal.
+            </p>
+          </>
+        ) : (
+          <>
+            <p className="text-base font-semibold text-[var(--foreground)] mb-2">No vote found</p>
+            <p className="text-sm text-[var(--muted)]">
+              You either haven't voted, already revealed, or voted from a different browser.
+            </p>
+          </>
+        )}
       </div>
     );
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-8 bg-[var(--card)] border border-[var(--border)] p-10">
-      <div>
-        <h3 className="text-2xl font-light text-[var(--foreground)]">Reveal Your Vote</h3>
-        <p className="text-sm text-[var(--muted)] mt-3 font-light">Your vote and secret must match your commit</p>
+    <div className="bg-white rounded-[var(--radius)] border border-[var(--border)] p-8 shadow-[var(--shadow)] animate-slide-up">
+      <h3 className="text-xl font-bold text-[var(--foreground)] mb-1">Reveal Your Vote</h3>
+      <p className="text-sm text-[var(--muted)] mb-6">
+        The reveal phase is open — reveal now to collect your winnings
+      </p>
+
+      {/* Saved vote display */}
+      <div className={`rounded-xl p-6 mb-6 flex items-center gap-4 ${
+        savedCommit.vote
+          ? 'bg-[var(--yes-bg)] border border-[var(--yes-border)]'
+          : 'bg-[var(--no-bg)] border border-[var(--no-border)]'
+      }`}>
+        <div className={`w-12 h-12 rounded-full flex items-center justify-center text-xl font-bold ${
+          savedCommit.vote ? 'bg-[var(--yes)] text-white' : 'bg-[var(--no)] text-white'
+        }`}>
+          {savedCommit.vote ? '✓' : '✗'}
+        </div>
+        <div>
+          <p className="text-xs font-semibold uppercase tracking-wide text-[var(--muted)] mb-0.5">Your committed vote</p>
+          <p className={`text-2xl font-bold ${savedCommit.vote ? 'text-[var(--yes)]' : 'text-[var(--no)]'}`}>
+            {savedCommit.vote ? 'YES' : 'NO'}
+          </p>
+        </div>
       </div>
 
-      {savedCommit && (
-        <div className="p-5 border border-[var(--border)] bg-[var(--gray-light)] space-y-2">
-          <p className="text-sm text-[var(--foreground)] font-light">
-            ✓ Found your saved commit! Vote and secret pre-filled.
-          </p>
-          <div className="text-xs text-[var(--muted)] font-mono space-y-1">
-            <div>Committed vote: {savedCommit.vote ? 'VERIFY (true)' : 'REJECT (false)'}</div>
-            <div>Committed hash: {savedCommit.hash.substring(0, 32)}...</div>
-          </div>
+      {/* Urgency warning */}
+      {isUrgent && minutesLeft !== null && (
+        <div className="flex items-center gap-2 p-3 rounded-lg bg-amber-50 border border-amber-200 text-amber-700 text-sm font-medium mb-5">
+          <svg className="w-4 h-4 flex-shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+          </svg>
+          Only {minutesLeft} minute{minutesLeft !== 1 ? 's' : ''} left to reveal!
         </div>
       )}
 
-      {!savedCommit && address && (
-        <div className="p-5 border border-[var(--border)] bg-[var(--gray-light)] text-sm font-light">
-          <p className="text-[var(--foreground)]">
-            ⚠️ No saved commit found for this wallet. Make sure to enter the exact vote and secret you used during commit phase.
-          </p>
-        </div>
-      )}
-
-      {/* Vote Selection */}
-      <div>
-        <label className="block text-sm font-light text-[var(--foreground)] mb-4 uppercase tracking-wider">
-          Your Position (must match commit)
-        </label>
-        <div className="grid grid-cols-2 gap-px bg-[var(--border)]">
-          <button
-            type="button"
-            onClick={() => setVote(true)}
-            className={`py-5 text-sm font-light uppercase tracking-widest transition-colors ${
-              vote === true
-                ? 'bg-[var(--foreground)] text-[var(--background)]'
-                : 'bg-[var(--card)] text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            VERIFY
-          </button>
-          <button
-            type="button"
-            onClick={() => setVote(false)}
-            className={`py-5 text-sm font-light uppercase tracking-widest transition-colors ${
-              vote === false
-                ? 'bg-[var(--foreground)] text-[var(--background)]'
-                : 'bg-[var(--card)] text-[var(--muted)] hover:text-[var(--foreground)]'
-            }`}
-          >
-            REJECT
-          </button>
-        </div>
-      </div>
-
-      {/* Secret Input */}
-      <div>
-        <label className="block text-sm font-light text-[var(--foreground)] mb-3 uppercase tracking-wider">
-          Your Secret
-        </label>
-        <input
-          type="text"
-          value={secret}
-          onChange={(e) => setSecret(e.target.value)}
-          placeholder="Enter the secret you saved during commit"
-          className={`w-full px-5 py-4 bg-[var(--background)] border text-[var(--foreground)] placeholder-[var(--muted)] focus:outline-none transition-colors font-mono text-sm font-light ${
-            hashMatches === true ? 'border-green-500' :
-            hashMatches === false ? 'border-red-500' :
-            'border-[var(--border)] focus:border-[var(--foreground)]'
-          }`}
-        />
-        {hashMatches === true && savedCommit && (
-          <p className="text-xs text-green-600 mt-2 font-light">
-            ✓ Hash matches! This will work.
-          </p>
-        )}
-        {hashMatches === false && savedCommit && (
-          <p className="text-xs text-red-600 mt-2 font-light">
-            ✗ Hash doesn&apos;t match. Check your vote and secret.
-          </p>
-        )}
-      </div>
-
-      {/* Error */}
       {error && (
-        <div className="p-5 border border-[var(--foreground)] bg-[var(--gray-light)] text-[var(--foreground)] text-sm font-light">
+        <div className="p-4 rounded-[var(--radius-btn)] bg-[var(--no-bg)] border border-[var(--no-border)] text-[var(--no)] text-sm font-medium mb-5">
           {error}
         </div>
       )}
 
-      {/* Submit */}
       <button
-        type="submit"
-        disabled={vote === null || !secret || isSubmitting}
-        className="w-full py-5 bg-[var(--foreground)] text-[var(--background)] font-light text-base disabled:opacity-30 disabled:cursor-not-allowed relative overflow-hidden group"
+        type="button"
+        disabled={isSubmitting}
+        onClick={handleReveal}
+        className="w-full py-4 bg-[#111827] text-white font-bold text-sm rounded-[var(--radius-btn)] hover:bg-[#1f2937] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
       >
-        <span className="relative z-10 transition-colors duration-1000 group-hover:text-[var(--foreground)]">
-          {isSubmitting ? 'Revealing...' : 'Reveal Vote'}
-        </span>
-        <div className="absolute inset-0 bg-[var(--background)] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-1000 origin-left"></div>
+        {isSubmitting ? (
+          <>
+            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin"></span>
+            Revealing...
+          </>
+        ) : 'Reveal My Vote'}
       </button>
 
-      <p className="text-xs text-[var(--muted)] text-center font-light">
-        If your vote or secret don&apos;t match your commit, the transaction will fail.
+      <p className="text-xs text-[var(--muted)] text-center mt-4">
+        If you don't reveal before the deadline, you forfeit your stake.
       </p>
-    </form>
+    </div>
   );
 }

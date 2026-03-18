@@ -2,38 +2,31 @@
 
 import { useState, useEffect } from 'react';
 import { useWallet } from '@/contexts/WalletContext';
-import { callHistoria } from '@/lib/wallet';
+import { resolveEvent } from '@/lib/wallet';
 
 interface ResolveButtonProps {
   eventId: string;
+  revealEndTimestamp?: number;
   onSuccess?: () => void;
 }
 
-export function ResolveButton({ eventId, onSuccess, revealEndTimestamp }: ResolveButtonProps & { revealEndTimestamp?: number }) {
+export function ResolveButton({ eventId, onSuccess, revealEndTimestamp }: ResolveButtonProps) {
   const { connected, address } = useWallet();
   const [isResolving, setIsResolving] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  // Validation on mount
   useEffect(() => {
     if (revealEndTimestamp) {
-      const now = Math.floor(Date.now() / 1000);
-      const diff = now - revealEndTimestamp;
-      // Check if reveal phase has truly ended
+      const diff = Date.now() - revealEndTimestamp;
       if (diff <= 0) {
-        setError(`Reveal phase not yet ended. Wait ${Math.ceil(-diff / 60)} minute(s).`);
+        setError(`Confirmation phase not yet ended. Wait ${Math.ceil(-diff / 60000)} minute(s).`);
       }
     }
-  }, [eventId, connected, address, revealEndTimestamp]);
+  }, [revealEndTimestamp]);
 
   const handleResolve = async () => {
-    if (!connected) {
+    if (!connected || !address) {
       setError('Please connect your wallet first');
-      return;
-    }
-
-    if (!address || address.trim() === '') {
-      setError(`Invalid wallet address. Connected: ${connected}, Address: "${address}". Please reconnect your wallet.`);
       return;
     }
 
@@ -41,27 +34,17 @@ export function ResolveButton({ eventId, onSuccess, revealEndTimestamp }: Resolv
     setError(null);
 
     try {
-      await callHistoria(
-        address,
-        'Resolve',
-        [eventId],
-        '' // No coins needed for resolve
-      );
-
+      await resolveEvent(BigInt(eventId));
       onSuccess?.();
     } catch (err) {
       const errorMsg = err instanceof Error ? err.message : 'Failed to resolve';
-
       let detailedError = errorMsg;
-      if (errorMsg.includes('4000') || errorMsg.includes('Failed to estimate gas')) {
-        const now = Math.floor(Date.now() / 1000);
-        const timeUntilEnd = revealEndTimestamp ? revealEndTimestamp - now : 0;
 
-        if (timeUntilEnd > 0) {
-          detailedError = `Reveal phase not yet ended on blockchain. Wait ${Math.ceil(timeUntilEnd / 60)} more minutes.`;
-        } else {
-          detailedError = `${errorMsg} - Possible causes: 1) Reveal phase not ended on blockchain (time sync issue), 2) Event already resolved, or 3) No reveals were made.`;
-        }
+      if (errorMsg.includes('ERevealNotEnded')) {
+        const timeLeft = revealEndTimestamp ? revealEndTimestamp - Date.now() : 0;
+        detailedError = `Confirmation phase not yet ended. Wait ${Math.ceil(timeLeft / 60000)} more minute(s).`;
+      } else if (errorMsg.includes('EAlreadyFinalized')) {
+        detailedError = 'This claim has already been resolved.';
       }
 
       setError(detailedError);
@@ -71,48 +54,45 @@ export function ResolveButton({ eventId, onSuccess, revealEndTimestamp }: Resolv
   };
 
   return (
-    <div className="bg-[var(--card)] border border-[var(--border)] p-10">
-      <div className="text-center space-y-6">
+    <div className="bg-[var(--surface)] rounded-[var(--radius)] border border-[var(--border)] p-8 shadow-[var(--shadow-sm)]">
+      <div className="flex items-start gap-4 mb-6">
+        <div className="w-10 h-10 rounded-full bg-[var(--surface-raised)] flex items-center justify-center flex-shrink-0">
+          <svg className="w-5 h-5 text-[var(--muted)]" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.5} d="M9 12l2 2 4-4m6 2a9 9 0 11-18 0 9 9 0 0118 0z" />
+          </svg>
+        </div>
         <div>
-          <h3 className="text-2xl font-light text-[var(--foreground)] mb-3">Reveal Phase Ended</h3>
-          <p className="text-sm text-[var(--muted)] font-light">
-            This event needs to be resolved. Anyone can call the resolve function to finalize the outcome and distribute stakes.
+          <h3 className="text-base font-bold text-[var(--foreground)] mb-1 tracking-tight">Ready to Finalize</h3>
+          <p className="text-sm text-[var(--muted)]">
+            The confirmation phase has ended. Finalize the results to distribute stakes to the winning side.
           </p>
         </div>
-
-        {!connected && (
-          <div className="p-5 border border-[var(--border)] bg-[var(--gray-light)] text-[var(--foreground)] text-sm font-light">
-            ⚠️ Please connect your wallet to resolve this event
-          </div>
-        )}
-
-        {error && (
-          <div className="p-5 border border-[var(--foreground)] bg-[var(--gray-light)] text-[var(--foreground)] text-sm font-light">
-            {error}
-          </div>
-        )}
-
-        <button
-          onClick={handleResolve}
-          disabled={isResolving || !connected || !address}
-          className="w-full py-5 bg-[var(--foreground)] text-[var(--background)] font-light text-base disabled:opacity-30 disabled:cursor-not-allowed relative overflow-hidden group"
-        >
-          <span className="relative z-10 transition-colors duration-1000 group-hover:text-[var(--foreground)]">
-            {isResolving ? 'Resolving...' : !connected ? 'Connect Wallet First' : 'Resolve Event'}
-          </span>
-          <div className="absolute inset-0 bg-[var(--background)] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-1000 origin-left"></div>
-        </button>
-
-        <p className="text-xs text-[var(--muted)] font-light">
-          This will finalize the voting outcome and distribute stakes to winners.
-        </p>
-
-        {connected && address && (
-          <p className="text-xs text-[var(--muted)] font-mono font-light">
-            Calling as: {address.slice(0, 12)}...{address.slice(-8)}
-          </p>
-        )}
       </div>
+
+      {!connected && (
+        <div className="p-4 rounded-[var(--radius-sm)] bg-amber-50 border border-amber-200 text-amber-700 text-sm font-medium mb-5">
+          Connect your wallet to finalize this claim
+        </div>
+      )}
+
+      {error && (
+        <div className="p-4 rounded-[var(--radius-sm)] bg-[var(--no-bg)] border border-[var(--no-border)] text-[var(--no-light)] text-sm font-medium mb-5">
+          {error}
+        </div>
+      )}
+
+      <button
+        onClick={handleResolve}
+        disabled={isResolving || !connected || !address}
+        className="w-full py-3 bg-[var(--accent)] text-white font-bold text-sm rounded-[var(--radius-sm)] hover:bg-[var(--accent-hover)] disabled:opacity-40 disabled:cursor-not-allowed transition-all flex items-center justify-center gap-2"
+      >
+        {isResolving ? (
+          <>
+            <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+            Finalizing...
+          </>
+        ) : !connected ? 'Connect Wallet First' : 'Finalize Results'}
+      </button>
     </div>
   );
 }

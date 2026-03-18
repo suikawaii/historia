@@ -1,42 +1,48 @@
 'use client';
 
+import Link from 'next/link';
+
 export function Footer() {
+  const explorerUrl = `https://suiscan.xyz/testnet/object/${process.env.NEXT_PUBLIC_PACKAGE_ID}`;
+
   return (
-    <footer className="border-t border-[var(--border)] mt-16 bg-[var(--card)]">
-      <div className="max-w-7xl mx-auto px-6 lg:px-16 py-16">
+    <footer className="border-t border-[var(--border)] bg-[var(--surface)] mt-auto">
+      <div className="max-w-5xl mx-auto px-6 lg:px-8 py-8">
         <div className="flex items-center justify-between text-sm text-[var(--muted)]">
-          <a
-            href="https://gno.land"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium hover:text-[var(--foreground)] transition-colors"
-          >
-            Built on Gno.land
-          </a>
-          <div className="flex items-center gap-10">
+          <div className="flex items-center gap-2">
+            <span className="font-semibold text-[var(--foreground)] text-xs tracking-tight">HISTORIA</span>
+            <span className="text-[var(--border)]">·</span>
             <a
-              href="https://gno.land/r/melonboy314/v1_whitepaper_historia"
+              href="https://suikawaii.netlify.app/"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[var(--foreground)] transition-colors font-medium"
+              className="text-xs hover:text-[var(--foreground)] transition-colors"
+            >
+              Powered by Suikawaii Labs
+            </a>
+          </div>
+          <div className="flex items-center gap-5">
+            <Link
+              href="/whitepaper"
+              className="text-xs hover:text-[var(--foreground)] transition-colors"
             >
               Whitepaper
-            </a>
+            </Link>
             <a
-              href="https://docs.adena.app"
+              href="https://sui.io"
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[var(--foreground)] transition-colors font-medium"
+              className="text-xs hover:text-[var(--foreground)] transition-colors"
             >
-              Adena
+              Sui
             </a>
             <a
-              href={`https://gno.land/${process.env.NEXT_PUBLIC_REALM_PATH?.replace('gno.land/', '') || 'r/melonboy314/historiav9'}`}
+              href={explorerUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="hover:text-[var(--foreground)] transition-colors font-medium"
+              className="text-xs hover:text-[var(--foreground)] transition-colors"
             >
-              Realm
+              Contract
             </a>
           </div>
         </div>

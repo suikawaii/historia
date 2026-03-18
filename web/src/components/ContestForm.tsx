@@ -3,7 +3,7 @@
 import { useState } from 'react';
 import { useWallet } from '@/contexts/WalletContext';
 import { generateCommitHash, generateSecret } from '@/lib/hash';
-import { callHistoria } from '@/lib/wallet';
+import { submitEvent } from '@/lib/wallet';
 import { CopyButton } from './CopyButton';
 import { Tooltip } from './Tooltip';
 
@@ -48,22 +48,21 @@ export function ContestForm({ parentEventId, parentDescription, stakeAmount, onS
       const totalRevealMinutes = parseInt(revealHours) * 60 + parseInt(revealMinutes);
 
       // Generate commit hash
-      const hash = generateCommitHash(address, vote, secret);
+      const commitHashBytes = generateCommitHash(address, vote, secret);
+      const stakeInMist = BigInt(stakeAmount);
+      const commitMs = BigInt(totalCommitMinutes * 60 * 1000);
+      const revealMs = BigInt(totalRevealMinutes * 60 * 1000);
 
-      // Call Contest function
-      await callHistoria(
-        address,
-        'Contest',
-        [parentEventId, description, String(stakeAmount), String(totalCommitMinutes), String(totalRevealMinutes), hash],
-        `${stakeAmount}ugnot`
-      );
+      // Note: Contest is submitted as a new event (SUI version doesn't have a separate Contest function)
+      const { digest } = await submitEvent(description, '', 3, stakeInMist, commitMs, revealMs, commitHashBytes);
 
-      // Save to localStorage
+      const hashHex = Array.from(commitHashBytes, b => b.toString(16).padStart(2, '0')).join('');
       localStorage.setItem(`historia_commit_new_${address}`, JSON.stringify({
         parentId: parentEventId,
         vote,
         secret,
-        hash,
+        hashHex,
+        digest,
         timestamp: Date.now()
       }));
 
@@ -73,7 +72,7 @@ export function ContestForm({ parentEventId, parentDescription, stakeAmount, onS
       let errorMessage = 'Failed to submit contest';
       if (err instanceof Error) {
         if (err.message.includes('insufficient funds')) {
-          errorMessage = `Insufficient GNOT balance. You need ${stakeAmount / 1000000} GNOT to create a contest.`;
+          errorMessage = `Insufficient SUI balance. You need ${(stakeAmount / 1_000_000_000).toFixed(2)} SUI to create a contest.`;
         } else if (err.message.includes('not resolved')) {
           errorMessage = 'Cannot contest an event that is not yet resolved.';
         } else {
@@ -107,7 +106,7 @@ export function ContestForm({ parentEventId, parentDescription, stakeAmount, onS
             <span className="relative z-10">Create Contest</span>
           </button>
           <p className="text-xs text-[var(--muted)] font-light">
-            Required stake: {stakeAmount / 1000000} GNOT
+            Required stake: {(stakeAmount / 1_000_000_000).toFixed(2)} SUI
           </p>
         </div>
       </div>
@@ -296,7 +295,7 @@ export function ContestForm({ parentEventId, parentDescription, stakeAmount, onS
         className="w-full py-5 bg-[var(--foreground)] text-[var(--background)] font-light text-base disabled:opacity-30 disabled:cursor-not-allowed relative overflow-hidden group"
       >
         <span className="relative z-10 transition-colors duration-1000 group-hover:text-[var(--foreground)]">
-          {isSubmitting ? 'Submitting...' : `Create Contest (${stakeAmount / 1000000} GNOT)`}
+          {isSubmitting ? 'Submitting...' : `Create Contest (${(stakeAmount / 1_000_000_000).toFixed(2)} SUI)`}
         </span>
         <div className="absolute inset-0 bg-[var(--background)] transform scale-x-0 group-hover:scale-x-100 transition-transform duration-1000 origin-left"></div>
       </button>
