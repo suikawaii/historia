@@ -34,8 +34,12 @@ export function SubmitForm({ onSuccess }: SubmitFormProps) {
   const [context, setContext] = useState('');
   const [category, setCategory] = useState<number>(0);
   const [stakeAmount, setStakeAmount] = useState('0.01');
-  const [votingHours, setVotingHours] = useState('1');
-  const [revealHours, setRevealHours] = useState('1');
+  const [votingDays, setVotingDays]   = useState('0');
+  const [votingHrs,  setVotingHrs]    = useState('1');
+  const [votingMins, setVotingMins]   = useState('0');
+  const [revealDays, setRevealDays]   = useState('0');
+  const [revealHrs,  setRevealHrs]    = useState('1');
+  const [revealMins, setRevealMins]   = useState('0');
   const [myVote, setMyVote] = useState<boolean>(true);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [submitStatus, setSubmitStatus] = useState<'idle' | 'signing' | 'indexing'>('idle');
@@ -55,12 +59,13 @@ export function SubmitForm({ onSuccess }: SubmitFormProps) {
     if (context.length > 500) { setError('Context too long (max 500 characters)'); return; }
     if (stake < 0.01) { setError('Minimum stake is 0.01 SUI'); return; }
 
-    const votingMinutes = parseInt(votingHours);
-    const revealMinutes = parseInt(revealHours);
+    const votingMinutes = (parseInt(votingDays)||0)*1440 + (parseInt(votingHrs)||0)*60 + (parseInt(votingMins)||0);
+    const revealMinutes = (parseInt(revealDays)||0)*1440 + (parseInt(revealHrs)||0)*60 + (parseInt(revealMins)||0);
 
     if (votingMinutes < 1) { setError('Voting phase must last at least 1 minute'); return; }
     if (revealMinutes < 1) { setError('Reveal phase must last at least 1 minute'); return; }
-    if (votingMinutes + revealMinutes > 43200) { setError('Total duration cannot exceed 30 days'); return; }
+    if (votingMinutes > 43200) { setError('Voting phase cannot exceed 30 days'); return; }
+    if (revealMinutes > 43200) { setError('Reveal phase cannot exceed 30 days'); return; }
 
     if (stake > 10 && !showConfirmation) {
       setShowConfirmation(true);
@@ -292,54 +297,63 @@ export function SubmitForm({ onSuccess }: SubmitFormProps) {
         <p className="text-xs mt-1.5 text-[var(--muted)] font-medium">{context.length}/500</p>
       </div>
 
-      {/* Stake + Durations */}
-      <div className="grid grid-cols-3 gap-4">
-        <div>
-          <label className="block text-sm font-semibold text-[var(--foreground)] mb-2">
-            Stake (SUI)
-          </label>
-          <input
-            type="number"
-            value={stakeAmount}
-            onChange={(e) => setStakeAmount(e.target.value)}
-            min="0.01"
-            step="0.01"
-            className={`w-full px-4 py-2.5 bg-[var(--background)] border rounded-[var(--radius-sm)] focus:outline-none focus:ring-2 text-[var(--foreground)] transition-all text-sm ${
-              stakeError ? 'border-[var(--no-light)] focus:ring-red-100' : 'border-[var(--border)] focus:border-[var(--border-strong)] focus:ring-gray-100'
-            }`}
-          />
-          {stakeError
-            ? <p className="text-xs mt-1.5 text-[var(--no-light)] font-medium">{stakeError}</p>
-            : <p className="text-xs mt-1.5 text-[var(--muted)]">Min. 0.01 SUI</p>
-          }
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-[var(--foreground)] mb-2">
-            Voting (min)
-          </label>
-          <input
-            type="number"
-            value={votingHours}
-            onChange={(e) => setVotingHours(e.target.value)}
-            min="1"
-            max="360"
-            className="w-full px-4 py-2.5 bg-[var(--background)] border border-[var(--border)] rounded-[var(--radius-sm)] text-[var(--foreground)] focus:outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-gray-100 transition-all text-sm"
-          />
-        </div>
-        <div>
-          <label className="block text-sm font-semibold text-[var(--foreground)] mb-2">
-            Reveal (min)
-          </label>
-          <input
-            type="number"
-            value={revealHours}
-            onChange={(e) => setRevealHours(e.target.value)}
-            min="1"
-            max="360"
-            className="w-full px-4 py-2.5 bg-[var(--background)] border border-[var(--border)] rounded-[var(--radius-sm)] text-[var(--foreground)] focus:outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-gray-100 transition-all text-sm"
-          />
-        </div>
+      {/* Stake */}
+      <div>
+        <label className="block text-sm font-semibold text-[var(--foreground)] mb-2">
+          Stake (SUI)
+        </label>
+        <input
+          type="number"
+          value={stakeAmount}
+          onChange={(e) => setStakeAmount(e.target.value)}
+          min="0.01"
+          step="0.01"
+          className={`w-full px-4 py-2.5 bg-[var(--background)] border rounded-[var(--radius-sm)] focus:outline-none focus:ring-2 text-[var(--foreground)] transition-all text-sm ${
+            stakeError ? 'border-[var(--no-light)] focus:ring-red-100' : 'border-[var(--border)] focus:border-[var(--border-strong)] focus:ring-gray-100'
+          }`}
+        />
+        {stakeError
+          ? <p className="text-xs mt-1.5 text-[var(--no-light)] font-medium">{stakeError}</p>
+          : <p className="text-xs mt-1.5 text-[var(--muted)]">Min. 0.01 SUI</p>
+        }
       </div>
+
+      {/* Durations */}
+      {(['Voting', 'Reveal'] as const).map((label) => {
+        const days  = label === 'Voting' ? votingDays  : revealDays;
+        const hrs   = label === 'Voting' ? votingHrs   : revealHrs;
+        const mins  = label === 'Voting' ? votingMins  : revealMins;
+        const setD  = label === 'Voting' ? setVotingDays  : setRevealDays;
+        const setH  = label === 'Voting' ? setVotingHrs   : setRevealHrs;
+        const setM  = label === 'Voting' ? setVotingMins  : setRevealMins;
+        return (
+          <div key={label}>
+            <label className="block text-sm font-semibold text-[var(--foreground)] mb-2">
+              {label} phase duration
+              <span className="font-normal text-[var(--muted)] text-xs ml-2">max 30 days</span>
+            </label>
+            <div className="grid grid-cols-3 gap-2">
+              {[
+                { val: days, set: setD, max: 30,  suffix: 'd' },
+                { val: hrs,  set: setH, max: 23,  suffix: 'h' },
+                { val: mins, set: setM, max: 59,  suffix: 'm' },
+              ].map(({ val, set, max, suffix }) => (
+                <div key={suffix} className="relative">
+                  <input
+                    type="number"
+                    value={val}
+                    onChange={(e) => set(e.target.value)}
+                    min="0"
+                    max={max}
+                    className="w-full pl-3 pr-8 py-2.5 bg-[var(--background)] border border-[var(--border)] rounded-[var(--radius-sm)] text-[var(--foreground)] focus:outline-none focus:border-[var(--border-strong)] focus:ring-2 focus:ring-gray-100 transition-all text-sm"
+                  />
+                  <span className="absolute right-3 top-1/2 -translate-y-1/2 text-xs text-[var(--subtle)] font-semibold pointer-events-none">{suffix}</span>
+                </div>
+              ))}
+            </div>
+          </div>
+        );
+      })}
 
       {/* Your vote */}
       <div>

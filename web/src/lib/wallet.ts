@@ -82,7 +82,7 @@ async function signAndExecute(tx: Transaction): Promise<{ digest: string }> {
         const ABORT_MESSAGES: Record<number, string> = {
           0:  'Description is too long (max 280 characters).',
           1:  'Stake amount is too low (minimum 0.01 SUI).',
-          2:  'Phase duration exceeds maximum (30 days).',
+          2:  'Phase duration exceeds maximum (1 month per phase).',
           3:  'Phase duration is too short (minimum 1 minute).',
           4:  'Wrong stake amount sent.',
           5:  'Action not allowed in the current phase.',

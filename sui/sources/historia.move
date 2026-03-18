@@ -36,8 +36,8 @@ module historia::historia {
     const MIN_PROPOSE_MIST: u64   = 10_000_000;
     const MAX_DESC_LEN: u64       = 280;
     const MAX_CONTEXT_LEN: u64    = 500;
-    /// 30 days in milliseconds
-    const MAX_DURATION_MS: u64    = 2_592_000_000;
+    /// 30 days in milliseconds — maximum per phase
+    const MAX_PHASE_MS: u64       = 2_592_000_000;
     /// 1 minute in milliseconds
     const MIN_PHASE_MS: u64       = 60_000;
 
@@ -210,7 +210,8 @@ module historia::historia {
         assert!(stake_amount >= MIN_PROPOSE_MIST, EStakeTooLow);
         assert!(commit_duration_ms >= MIN_PHASE_MS, EPhaseTooShort);
         assert!(reveal_duration_ms >= MIN_PHASE_MS, EPhaseTooShort);
-        assert!(commit_duration_ms + reveal_duration_ms <= MAX_DURATION_MS, EDurationExceeded);
+        assert!(commit_duration_ms <= MAX_PHASE_MS, EDurationExceeded);
+        assert!(reveal_duration_ms <= MAX_PHASE_MS, EDurationExceeded);
         assert!(vector::length(&commit_hash) == 32, EInvalidHashLen);
         assert!(coin::value(&stake_coin) >= stake_amount, EWrongStake);
 
